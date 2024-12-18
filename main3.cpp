@@ -63,7 +63,7 @@ bool checkDataFlow(const vector<string>& llvm_lines) {
     int node_count = 0;
     string label;
 
-    // Build labels map
+    // Build labels map (from your parser logic)
     for (const auto& line : llvm_lines) {
         if (line.find("define") != string::npos) continue;
 
@@ -87,7 +87,7 @@ bool checkDataFlow(const vector<string>& llvm_lines) {
         }
     }
 
-    // Build edges map
+    // Build edges map (from your parser logic)
     string current_block_label = "entry";
     for (const auto& line : llvm_lines) {
         string trimmedLine = trim(line);
@@ -126,9 +126,11 @@ bool checkDataFlow(const vector<string>& llvm_lines) {
         for (const auto& line : llvm_lines) {
             string trimmedLine = trim(line);
             
+            // Update current block
             if (trimmedLine.find(':') != string::npos) {
                 current_block_label = trimmedLine.substr(0, trimmedLine.find(':'));
                 
+                // Merge tainted vars from predecessor blocks
                 for (const auto& [pred, successors] : edges) {
                     if (find(successors.begin(), successors.end(), current_block_label) != successors.end()) {
                         for (const auto& var : blockTaintedVars[pred]) {
@@ -142,28 +144,34 @@ bool checkDataFlow(const vector<string>& llvm_lines) {
                 continue;
             }
 
+            // Skip empty lines after trimming
             if (trimmedLine.empty()) continue;
 
+            // Skip function declarations
             if (trimmedLine.find("define") != string::npos || 
                 trimmedLine.find("declare") != string::npos) {
                 continue;
             }
 
+            // Check for SOURCE calls
             if (trimmedLine.find("@SOURCE") != string::npos) {
                 size_t equalPos = trimmedLine.find('=');
                 if (equalPos != string::npos) {
                     string resultVar = trim(trimmedLine.substr(0, equalPos));
                     flowInfo.taintedVars.insert(resultVar);
+                    cout << "DEBUG: Tainted from SOURCE: " << resultVar << endl;
                 }
                 continue;
             }
 
+            // Track store instructions
             if (trimmedLine.find("store") != string::npos) {
                 size_t comma = trimmedLine.find(',');
                 if (comma != string::npos) {
                     string fullSourceVal = trimmedLine.substr(trimmedLine.find("store") + 5, comma - (trimmedLine.find("store") + 5));
                     string destPtr = trimmedLine.substr(comma + 1);
                     
+                    // Extract the actual value being stored (after the type)
                     string sourceVal;
                     size_t lastSpace = fullSourceVal.find_last_of(' ');
                     if (lastSpace != string::npos) {
@@ -172,14 +180,17 @@ bool checkDataFlow(const vector<string>& llvm_lines) {
                         sourceVal = trim(fullSourceVal);
                     }
                     destPtr = trim(destPtr);
+                    // Remove comments if present
                     size_t commentPos = destPtr.find(';');
                     if (commentPos != string::npos) {
                         destPtr = trim(destPtr.substr(0, commentPos));
                     }
+                    // Remove type information
                     if (destPtr.find(' ') != string::npos) {
                         destPtr = destPtr.substr(destPtr.find(' ') + 1);
                     }
 
+                    // Check if storing a constant number
                     bool isConstant = true;
                     if (sourceVal[0] == '%') {
                         isConstant = false;
@@ -192,14 +203,21 @@ bool checkDataFlow(const vector<string>& llvm_lines) {
                         }
                     }
 
+                    cout << "DEBUG: Store instruction - Source: " << sourceVal 
+                         << ", Dest: " << destPtr 
+                         << ", isConstant: " << (isConstant ? "true" : "false") << endl;
+
                     if (isConstant) {
                         flowInfo.taintedVars.erase(destPtr);
+                        cout << "DEBUG: Untainted due to constant: " << destPtr << endl;
                     } else if (flowInfo.taintedVars.find(sourceVal) != flowInfo.taintedVars.end()) {
                         flowInfo.taintedVars.insert(destPtr);
+                        cout << "DEBUG: Tainted from store: " << destPtr << endl;
                     }
                 }
             }
 
+            // Track load instructions
             if (trimmedLine.find("load") != string::npos) {
                 size_t equalPos = trimmedLine.find('=');
                 if (equalPos != string::npos) {
@@ -207,12 +225,17 @@ bool checkDataFlow(const vector<string>& llvm_lines) {
                     string sourcePtr = trimmedLine.substr(trimmedLine.find("ptr") + 3);
                     sourcePtr = trim(sourcePtr);
 
+                    cout << "DEBUG: Load instruction - Result: " << resultVar 
+                         << ", Source: " << sourcePtr << endl;
+
                     if (flowInfo.taintedVars.find(sourcePtr) != flowInfo.taintedVars.end()) {
                         flowInfo.taintedVars.insert(resultVar);
+                        cout << "DEBUG: Tainted from load: " << resultVar << endl;
                     }
                 }
             }
 
+            // Check for SINK calls
             if (trimmedLine.find("@SINK") != string::npos) {
                 size_t openParen = trimmedLine.find('(');
                 size_t closeParen = trimmedLine.find(')');
@@ -222,6 +245,8 @@ bool checkDataFlow(const vector<string>& llvm_lines) {
                     if (sinkArg.find(' ') != string::npos) {
                         sinkArg = sinkArg.substr(sinkArg.find(' ') + 1);
                     }
+                    cout << "DEBUG: SINK called with: " << sinkArg 
+                         << " (tainted: " << (flowInfo.taintedVars.find(sinkArg) != flowInfo.taintedVars.end() ? "yes" : "no") << ")" << endl;
                     
                     if (flowInfo.taintedVars.find(sinkArg) != flowInfo.taintedVars.end()) {
                         return true;
@@ -229,6 +254,7 @@ bool checkDataFlow(const vector<string>& llvm_lines) {
                 }
             }
 
+            // Update block-specific tainted vars
             for (const auto& var : flowInfo.taintedVars) {
                 if (blockTaintedVars[current_block_label].insert(var).second) {
                     changed = true;
