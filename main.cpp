@@ -52,18 +52,17 @@ void writeDotFile(const vector<string>& lines) {
 
 // New structure to hold variable tracking information
 struct DataFlowInfo {
-    set<string> taintedVars;  // Variables that contain data from SOURCE
+    set<string> taintedVars;  // list of tainted vars
     bool hasFlow;             // Whether we've found a flow to SINK
 };
 
 bool checkDataFlow(const vector<string>& llvm_lines) {
-    // First build CFG using existing parser data structures
     unordered_map<string, int> labels;
     map<string, vector<string>> edges;
     int node_count = 0;
     string label;
 
-    // Build labels map
+    // similar to parseLLVMtoDOT, but we are just building the labels and edges, we do 2 passes 
     for (const auto& line : llvm_lines) {
         if (line.find("define") != string::npos) continue;
 
@@ -76,7 +75,7 @@ bool checkDataFlow(const vector<string>& llvm_lines) {
         node_count++;
         break;
     }
-
+    //second pass  to complete label mapping for all blocks
     for (const auto& line : llvm_lines) {
         if (line.find(':') != string::npos) {
             label = line.substr(0, line.find(':'));
@@ -114,7 +113,7 @@ bool checkDataFlow(const vector<string>& llvm_lines) {
         }
     }
 
-    // Now do dataflow analysis with CFG awareness
+    // Now do dataflow analysis
     DataFlowInfo flowInfo;
     unordered_map<string, set<string>> blockTaintedVars;
     current_block_label = "entry";
@@ -411,7 +410,6 @@ int main(int argc, char* argv[]) {
 
     inputFile.close();
 
-    // Only perform dataflow analysis
     bool hasFlow = checkDataFlow(lines);
     cout << (hasFlow ? "FLOW" : "NO FLOW") << endl;
 
